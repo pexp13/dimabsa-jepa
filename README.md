@@ -66,7 +66,18 @@ normalisation); `tests/test_core.py` checks agreement with the official script.
 
 ## Results
 
-No results yet — the first CPU pilot (English, `distilroberta-base`, 2k training instances, 3 seeds) is running.
+Only a truncated CPU pilot so far: English (restaurant + laptop), `distilroberta-base`, 2,000 training
+instances, 3 epochs, **one seed** — stopped early, so this shows the pipeline works and nothing more.
+The difference between the two rows is well inside seed noise.
+
+| variant | seeds | dev RMSE | test RMSE | test PCC-V | test PCC-A |
+|---|---|---|---|---|---|
+| baseline | 1 | 1.1918 | 1.5241 | 0.7850 | 0.5228 |
+| jepa-aux-random | 1 | 1.1832 | 1.5318 | 0.7803 | 0.5208 |
+
+Reference points on the English test sets (RMSE, 1–9 scale): predicting the train mean gives 2.20;
+the task's unofficial Subtask 1 ranking has best / median of 1.24 / 1.42 (laptop) and 1.10 / 1.33
+(restaurant).
 
 ## Layout
 
