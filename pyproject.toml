@@ -1,0 +1,25 @@
+[project]
+name = "dimabsa-jepa"
+version = "0.1.0"
+description = "JEPA-style latent prediction objectives for SemEval-2026 Task 3 (DimABSA)"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.2",
+    "transformers>=4.44",
+    "numpy",
+    "sentencepiece",
+    "protobuf",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
