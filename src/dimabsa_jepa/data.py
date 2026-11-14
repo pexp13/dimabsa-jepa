@@ -1,4 +1,4 @@
-"""Loading DimABSA / DimStance files as flat (text, aspect) -> (V, A) instances."""
+"""Загрузка файлов DimABSA / DimStance в плоский список примеров (текст, аспект) -> (V, A)."""
 from __future__ import annotations
 
 import json
@@ -16,9 +16,9 @@ class Instance:
     id: str
     text: str
     aspect: str
-    va: tuple[float, float] | None = None  # None for unlabeled data
-    opinion: str | None = None  # only in *_train_alltasks files
-    source: str = ""  # e.g. "eng_restaurant"
+    va: tuple[float, float] | None = None  # None для неразмеченных данных
+    opinion: str | None = None  # есть только в файлах *_train_alltasks
+    source: str = ""  # например, "eng_restaurant"
 
 
 def _parse_va(s: str) -> tuple[float, float]:
@@ -27,11 +27,11 @@ def _parse_va(s: str) -> tuple[float, float]:
 
 
 def read_file(path: str | Path) -> list[Instance]:
-    """Read one jsonl file in any of the task formats.
+    """Читает один jsonl-файл в любом из форматов задачи.
 
-    Handles `Quadruplet` / `Triplet` (train_alltasks), `Aspect_VA` (subtask 1
-    train/dev/gold test) and bare `Aspect` lists (unlabeled test input).
-    Implicit aspects ("NULL") are skipped: subtask 1 only scores explicit ones.
+    Поддерживает `Quadruplet` / `Triplet` (train_alltasks), `Aspect_VA` (train/dev/
+    test с метками подзадачи 1) и простые списки `Aspect` (тест без меток).
+    Неявные аспекты ("NULL") пропускаются: в подзадаче 1 оцениваются только явные.
     """
     path = Path(path)
     source = "_".join(path.name.split("_")[:-2])
@@ -64,10 +64,10 @@ def read_file(path: str | Path) -> list[Instance]:
 
 
 def merge_duplicates(instances: list[Instance]) -> list[Instance]:
-    """Average VA over repeated (ID, aspect) pairs.
+    """Усредняет VA по повторяющимся парам (ID, аспект).
 
-    train_alltasks files list one entry per (aspect, opinion) pair, while
-    subtask 1 scores a single VA per aspect.
+    В файлах train_alltasks запись заведена на каждую пару (аспект, мнение),
+    а в подзадаче 1 у аспекта одна оценка VA.
     """
     groups: dict[tuple[str, str], list[Instance]] = {}
     for inst in instances:
@@ -84,7 +84,7 @@ def merge_duplicates(instances: list[Instance]) -> list[Instance]:
 
 def find_files(root: str | Path, split: str, track: str = "a",
                langs: list[str] | None = None, domains: list[str] | None = None) -> list[Path]:
-    """Subtask-1 files for a split, optionally filtered by language / domain."""
+    """Файлы подзадачи 1 для заданной части данных, с фильтром по языку и домену."""
     base = Path(root) / "task-dataset" / f"track_{track}" / "subtask_1"
     files = []
     for p in sorted(base.glob(f"*/*_{split}_*.jsonl")):
@@ -99,7 +99,7 @@ def find_files(root: str | Path, split: str, track: str = "a",
 
 
 def find_span(text: str, phrase: str | None) -> tuple[int, int] | None:
-    """Character span of `phrase` in `text` (case-insensitive), or None."""
+    """Позиция `phrase` в `text` в символах (без учёта регистра) или None."""
     if not phrase:
         return None
     i = text.lower().find(phrase.lower())
@@ -107,7 +107,7 @@ def find_span(text: str, phrase: str | None) -> tuple[int, int] | None:
 
 
 def sample_block_mask(n: int, ratio: float, max_span: int, rng: np.random.Generator) -> np.ndarray:
-    """Mask ~ratio of n positions with contiguous blocks; keeps >=1 visible if n > 1."""
+    """Маскирует ~ratio из n позиций непрерывными блоками; при n > 1 хотя бы одна остаётся видимой."""
     mask = np.zeros(n, dtype=bool)
     if n <= 1:
         return mask
@@ -119,19 +119,19 @@ def sample_block_mask(n: int, ratio: float, max_span: int, rng: np.random.Genera
         length = int(min(rng.integers(1, max_span + 1), remaining))
         start = int(rng.integers(0, n - length + 1))
         mask[start:start + length] = True
-    if mask.sum() > target:  # overlapping blocks cannot overshoot, but stay safe
+    if mask.sum() > target:  # блоки не могут дать перебор, но подстрахуемся
         on = np.flatnonzero(mask)
         mask[on[target:]] = False
     return mask
 
 
 class Collator:
-    """Tokenizes (aspect, text) pairs and builds the JEPA target mask.
+    """Токенизирует пары (аспект, текст) и строит маску целей JEPA.
 
-    jepa_mask marks *text* tokens hidden from the context encoder and predicted
-    in latent space. strategy:
-      random  - random contiguous blocks covering ~mask_ratio of the text
-      opinion - the annotated opinion span when available, else random blocks
+    jepa_mask отмечает токены *текста*, скрытые от context-энкодера; их
+    представления предсказываются в латентном пространстве. Стратегии:
+      random  - случайные непрерывные блоки, ~mask_ratio текста
+      opinion - размеченный фрагмент-мнение, если он есть, иначе случайные блоки
     """
 
     def __init__(self, tokenizer, max_length: int = 128, mask_strategy: str = "random",
@@ -180,7 +180,7 @@ class Collator:
 
 
 def write_predictions(path: str | Path, instances: list[Instance], preds: np.ndarray) -> None:
-    """Write subtask-1 submission jsonl (ID, Aspect_VA), preserving input order."""
+    """Пишет jsonl в формате сабмита подзадачи 1 (ID, Aspect_VA), сохраняя порядок входа."""
     rows: dict[str, list[dict]] = {}
     for inst, (v, a) in zip(instances, preds):
         rows.setdefault(inst.id, []).append({"Aspect": inst.aspect, "VA": f"{v:.2f}#{a:.2f}"})

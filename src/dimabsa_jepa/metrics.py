@@ -1,11 +1,11 @@
-"""Subtask 1 metrics. `rmse_va` matches the official evaluation script."""
+"""Метрики подзадачи 1. `rmse_va` совпадает с официальным скриптом оценки."""
 from __future__ import annotations
 
 import numpy as np
 
 
 def rmse_va(pred: np.ndarray, gold: np.ndarray) -> float:
-    """sqrt( sum_i ((Vp-Vg)^2 + (Ap-Ag)^2) / N ) for arrays of shape (N, 2)."""
+    """sqrt( sum_i ((Vp-Vg)^2 + (Ap-Ag)^2) / N ) для массивов формы (N, 2)."""
     pred, gold = np.asarray(pred, float), np.asarray(gold, float)
     return float(np.sqrt(((pred - gold) ** 2).sum(axis=1).mean()))
 

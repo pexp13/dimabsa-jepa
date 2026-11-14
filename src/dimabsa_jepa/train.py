@@ -1,9 +1,9 @@
-"""Train / evaluate DimASR (subtask 1) with an optional JEPA objective.
+"""Обучение и оценка DimASR (подзадача 1) с необязательной JEPA-функцией потерь.
 
-Three regimes, all through the same entry point:
-  baseline        --jepa-weight 0 --pretrain-epochs 0   plain fine-tuning
-  JEPA auxiliary  --jepa-weight L                       L_reg + L * L_jepa, jointly
-  JEPA pretrain   --pretrain-epochs N                   N epochs of L_jepa only, then fine-tune
+Три режима через одну точку входа:
+  baseline              --jepa-weight 0 --pretrain-epochs 0   обычное дообучение
+  JEPA как доп. лосс    --jepa-weight L                       L_reg + L * L_jepa, совместно
+  JEPA-предобучение     --pretrain-epochs N                   N эпох только L_jepa, затем дообучение
 """
 from __future__ import annotations
 
@@ -29,33 +29,33 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-root", default="data/DimABSA2026")
     p.add_argument("--track", default="a", choices=["a", "b"])
-    p.add_argument("--langs", nargs="*", default=None, help="e.g. eng zho (default: all)")
-    p.add_argument("--domains", nargs="*", default=None, help="e.g. restaurant laptop (default: all)")
+    p.add_argument("--langs", nargs="*", default=None, help="например: eng zho (по умолчанию все)")
+    p.add_argument("--domains", nargs="*", default=None, help="например: restaurant laptop (по умолчанию все)")
     p.add_argument("--model", default="xlm-roberta-base")
     p.add_argument("--max-length", type=int, default=128)
     p.add_argument("--epochs", type=int, default=5)
     p.add_argument("--batch-size", type=int, default=32)
-    p.add_argument("--lr", type=float, default=3e-5, help="encoder learning rate")
-    p.add_argument("--head-lr", type=float, default=5e-4, help="VA head and JEPA predictor learning rate")
+    p.add_argument("--lr", type=float, default=3e-5, help="learning rate энкодера")
+    p.add_argument("--head-lr", type=float, default=5e-4, help="learning rate головы VA и предиктора JEPA")
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--warmup", type=float, default=0.1)
     # JEPA
-    p.add_argument("--jepa-weight", type=float, default=0.0, help="weight of the JEPA loss during fine-tuning")
-    p.add_argument("--pretrain-epochs", type=int, default=0, help="JEPA-only epochs before fine-tuning")
+    p.add_argument("--jepa-weight", type=float, default=0.0, help="вес JEPA-лосса при дообучении")
+    p.add_argument("--pretrain-epochs", type=int, default=0, help="число эпох только с JEPA перед дообучением")
     p.add_argument("--pretrain-on-eval-text", action="store_true",
-                   help="also use dev/test *texts* (never labels) for JEPA pretraining (transductive)")
+                   help="использовать в JEPA-предобучении ещё и *тексты* dev/test (метки — никогда)")
     p.add_argument("--mask-strategy", default="random", choices=["random", "opinion"])
     p.add_argument("--mask-ratio", type=float, default=0.3)
     p.add_argument("--max-span", type=int, default=5)
-    p.add_argument("--ema", type=float, default=0.996, help="target EMA momentum (ramped to 1.0); 1.0 = frozen target")
+    p.add_argument("--ema", type=float, default=0.996, help="momentum EMA для target-энкодера (растёт до 1.0); 1.0 = замороженный target")
     p.add_argument("--pred-dim", type=int, default=256)
     p.add_argument("--pred-layers", type=int, default=2)
     # misc
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--max-train", type=int, default=None, help="subsample training instances (debug / low-resource)")
-    p.add_argument("--amp", action="store_true", help="bf16/fp16 autocast on CUDA")
+    p.add_argument("--max-train", type=int, default=None, help="взять подвыборку обучающих примеров (отладка / мало данных)")
+    p.add_argument("--amp", action="store_true", help="смешанная точность (autocast) на CUDA")
     p.add_argument("--threads", type=int, default=None)
-    p.add_argument("--out", default=None, help="run directory (default: runs/<auto name>)")
+    p.add_argument("--out", default=None, help="каталог прогона (по умолчанию runs/<авто-имя>)")
     return p.parse_args(argv)
 
 
@@ -77,7 +77,7 @@ def load_split(args, split: str) -> dict[str, list[Instance]]:
 @torch.no_grad()
 def predict(model, instances, collate, device, batch_size, amp) -> np.ndarray:
     model.eval()
-    order = sorted(range(len(instances)), key=lambda i: len(instances[i].text))  # length-bucketed
+    order = sorted(range(len(instances)), key=lambda i: len(instances[i].text))  # батчи по длине
     preds = np.zeros((len(instances), 2), dtype=np.float32)
     for s in range(0, len(order), batch_size * 2):
         idx = order[s:s + batch_size * 2]
@@ -89,7 +89,7 @@ def predict(model, instances, collate, device, batch_size, amp) -> np.ndarray:
 
 
 def evaluate(model, files: dict[str, list[Instance]], collate, device, args) -> tuple[dict, dict]:
-    """Per-file and pooled metrics; returns (report, predictions per file)."""
+    """Метрики по каждому файлу и суммарные; возвращает (отчёт, предсказания по файлам)."""
     report, all_pred, all_gold, preds_by_file = {}, [], [], {}
     for name, insts in files.items():
         pred = np.round(predict(model, insts, collate, device, args.batch_size, args.amp), 2)
@@ -127,7 +127,7 @@ def run_epoch(model, loader, opt, sched, device, args, *, jepa_weight: float, re
         opt.step()
         sched.step()
         if jepa_weight > 0:
-            # momentum ramps linearly from --ema to 1.0 over all JEPA steps (as in I-JEPA)
+            # momentum линейно растёт от --ema до 1.0 за все JEPA-шаги (как в I-JEPA)
             frac = ema_state["step"] / max(1, ema_state["total"])
             model.ema_update(args.ema + (1.0 - args.ema) * frac)
             ema_state["step"] += 1
@@ -180,7 +180,7 @@ def main(argv=None) -> dict:
     history = []
     ft_jepa_steps = len(loader) * args.epochs if args.jepa_weight > 0 else 0
 
-    # ---- stage 1: JEPA-only pretraining (no labels used) ----
+    # ---- этап 1: предобучение только с JEPA (метки не используются) ----
     if args.pretrain_epochs > 0:
         pre = list(train)
         if args.pretrain_on_eval_text:
@@ -198,7 +198,7 @@ def main(argv=None) -> dict:
     else:
         ema_state = {"step": 0, "total": ft_jepa_steps}
 
-    # ---- stage 2: supervised fine-tuning (+ optional JEPA auxiliary loss) ----
+    # ---- этап 2: дообучение с метками (+ необязательный JEPA-лосс) ----
     opt, sched = make_optimizer(model, args, len(loader) * args.epochs)
     best = {"rmse": float("inf"), "epoch": 0, "state": None}
     for ep in range(args.epochs):
@@ -214,7 +214,7 @@ def main(argv=None) -> dict:
                     if k.startswith(("encoder.", "head."))}
             best = {"rmse": rmse, "epoch": ep + 1, "state": keep}
 
-    # ---- test with the best-dev checkpoint ----
+    # ---- тест на чекпойнте с лучшим dev ----
     model.load_state_dict(best["state"], strict=False)
     dev_report, _ = evaluate(model, dev_files, collate, device, args)
     test_report, test_preds = evaluate(model, test_files, collate, device, args)

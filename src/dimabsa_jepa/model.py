@@ -1,4 +1,4 @@
-"""Encoder + VA regression head + I-JEPA-style latent predictor."""
+"""Энкодер + регрессионная голова VA + предиктор латентов в стиле I-JEPA."""
 from __future__ import annotations
 
 import copy
@@ -20,7 +20,7 @@ def sinusoidal_positions(max_len: int, dim: int) -> torch.Tensor:
 
 
 class JepaPredictor(nn.Module):
-    """Narrow transformer: context latents + mask tokens -> target latents."""
+    """Узкий трансформер: латенты контекста + mask-токены -> латенты цели."""
 
     def __init__(self, hidden: int, dim: int = 256, layers: int = 2, heads: int = 4, max_len: int = 512):
         super().__init__()
@@ -42,13 +42,13 @@ class JepaPredictor(nn.Module):
 
 
 class DimAsrJepa(nn.Module):
-    """Context encoder (trained), EMA target encoder, VA head and JEPA predictor.
+    """Context-энкодер (обучается), EMA target-энкодер, голова VA и предиктор JEPA.
 
-    The JEPA objective follows I-JEPA: tokens under `jepa_mask` are removed from
-    the context encoder's view (attention-masked, so nothing can attend to
-    them), and the predictor must regress the target encoder's representation
-    of those tokens, computed from the full unmasked input. Nothing is
-    reconstructed in token space.
+    Функция потерь повторяет I-JEPA: токены под `jepa_mask` убираются из поля
+    зрения context-энкодера (через attention mask, так что на них никто не может
+    смотреть), а предиктор должен восстановить представления этих токенов из
+    target-энкодера, посчитанные по полному входу без маски. В пространстве
+    токенов ничего не восстанавливается.
     """
 
     def __init__(self, model_name: str, use_jepa: bool = True, pred_dim: int = 256,
@@ -70,7 +70,7 @@ class DimAsrJepa(nn.Module):
     def train(self, mode: bool = True):
         super().train(mode)
         if self.use_jepa:
-            self.target.eval()  # target never uses dropout
+            self.target.eval()  # в target-энкодере dropout всегда выключен
         return self
 
     @staticmethod
@@ -78,7 +78,7 @@ class DimAsrJepa(nn.Module):
         return enc(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
 
     def predict_va(self, input_ids, attention_mask) -> torch.Tensor:
-        """VA in normalized units: (score - 5) / 4, i.e. roughly [-1, 1]."""
+        """VA в нормированных единицах: (оценка - 5) / 4, то есть примерно [-1, 1]."""
         h = self._states(self.encoder, input_ids, attention_mask)
         m = attention_mask.unsqueeze(-1).to(h.dtype)
         pooled = (h * m).sum(1) / m.sum(1).clamp(min=1)
@@ -97,7 +97,7 @@ class DimAsrJepa(nn.Module):
         pred = self.predictor(ctx.float(), attention_mask, jepa_mask)
         tgt = t[jepa_mask]
         loss = F.smooth_l1_loss(pred[jepa_mask], tgt)
-        # collapse monitor: per-feature std of targets across masked tokens (≈1 is healthy)
+        # контроль коллапса: std целей по признакам среди скрытых токенов (≈1 — норма)
         std = tgt.std(dim=0).mean().item() if tgt.size(0) > 1 else float("nan")
         return loss, {"target_std": std}
 

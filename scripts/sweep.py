@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-"""Run baseline vs JEPA variants over several seeds and print a summary table.
+"""Запускает baseline и JEPA-варианты на нескольких сидах и печатает сводную таблицу.
 
     python scripts/sweep.py --name pilot --seeds 0 1 2 -- --langs eng --model distilroberta-base --epochs 3
 
-Everything after `--` is passed to every run. Finished runs are skipped, so the
-sweep can be resumed; `--summary-only` just re-prints the table.
+Всё после `--` передаётся в каждый прогон. Завершённые прогоны пропускаются, так что
+серию можно продолжить; `--summary-only` только заново печатает таблицу.
 """
 from __future__ import annotations
 
@@ -56,13 +56,13 @@ def main():
     p.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     p.add_argument("--variants", nargs="+", default=["baseline", "jepa-aux-random", "jepa-aux-opinion"],
                    choices=list(VARIANTS))
-    p.add_argument("--gpus", type=int, default=0, help="run jobs in parallel, one per GPU (0 = sequential)")
+    p.add_argument("--gpus", type=int, default=0, help="запускать задания параллельно, по одному на GPU (0 = последовательно)")
     p.add_argument("--summary-only", action="store_true")
     args = p.parse_args(argv)
     root = Path("runs") / args.name
     if not args.summary_only:
         jobs = []
-        for seed in args.seeds:  # seed-major order: a partial sweep is still a fair comparison
+        for seed in args.seeds:  # сначала по сидам: даже неполная серия остаётся честным сравнением
             for variant in args.variants:
                 out = root / variant / f"s{seed}"
                 if not (out / "result.json").exists():

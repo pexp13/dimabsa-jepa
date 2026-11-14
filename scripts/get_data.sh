@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch the official DimABSA2026 repo (datasets + evaluation script) into data/.
+# Скачивает официальный репозиторий DimABSA2026 (данные и скрипт оценки) в data/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [ -d data/DimABSA2026/.git ]; then

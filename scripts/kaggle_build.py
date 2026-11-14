@@ -1,14 +1,14 @@
 #!/usr/bin/env python
-"""Build a self-contained Kaggle script kernel that runs scripts/sweep.py on GPU.
+"""Собирает самодостаточный Kaggle-скрипт, который запускает scripts/sweep.py на GPU.
 
     python scripts/kaggle_build.py --user <kaggle user> --name xlmr-s0 -- \\
         --name xlmr-all --seeds 0 --gpus 2 -- --model xlm-roberta-base --epochs 5 --amp
     kaggle kernels push -p kaggle/xlmr-s0 --accelerator NvidiaTeslaT4
     kaggle kernels output <user>/dimabsa-jepa-xlmr-s0 -p runs/kaggle/xlmr-s0
 
-Everything after the first `--` is the sweep.py command line. The repo source is
-embedded in the kernel, so the GitHub repo does not have to be public; the task
-data is cloned from the official repo inside the kernel (needs internet enabled).
+Всё после первого `--` — командная строка sweep.py. Исходники репозитория
+встраиваются в скрипт, поэтому репозиторий на GitHub может быть приватным; данные
+задачи клонируются из официального репозитория уже на Kaggle (нужен включённый интернет).
 """
 from __future__ import annotations
 
