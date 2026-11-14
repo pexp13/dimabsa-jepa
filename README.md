@@ -1,95 +1,163 @@
 # dimabsa-jepa
 
-Testing JEPA-style latent prediction on [SemEval-2026 Task 3: DimABSA](https://github.com/DimABSA/DimABSA2026),
-starting with **Subtask 1 (DimASR)**: given a text and an aspect, regress valence and arousal in [1, 9]
-(metric: RMSE over VA). Track B (DimStance) uses the same format and works with `--track b`.
+Проверка JEPA-подобного предсказания в латентном пространстве на задаче
+[SemEval-2026 Task 3: DimABSA](https://github.com/DimABSA/DimABSA2026).
+Сделана **подзадача 1 (DimASR)**: по тексту и аспекту предсказать valence и arousal в диапазоне [1, 9]
+(метрика — RMSE по VA). Track B (DimStance) имеет тот же формат и запускается с `--track b`.
 
-## The idea
+## Идея
 
-A pretrained encoder reads `<s> aspect </s></s> text </s>` and a small head regresses (V, A) from the
-mean-pooled states. On top of that baseline there is an I-JEPA-style objective:
+Предобученный энкодер читает `<s> аспект </s></s> текст </s>`, небольшая голова предсказывает (V, A)
+по усреднённым состояниям токенов. Поверх этого baseline добавлена функция потерь в стиле I-JEPA:
 
-- a set of **text tokens is hidden from the context encoder** (attention-masked, so no token can attend
-  to them — they are removed from the view, not replaced by `[MASK]`);
-- an **EMA target encoder** reads the full input and produces the latents of the hidden tokens;
-- a narrow transformer **predictor** gets the context latents plus positional mask tokens and regresses
-  the target latents (smooth-L1 on layer-normalised targets). Nothing is reconstructed in token space.
+- часть **токенов текста скрывается от context-энкодера** (через attention mask: на них не может
+  смотреть ни один токен — они убраны из входа, а не заменены на `[MASK]`);
+- **EMA target-энкодер** читает полный вход и выдаёт латентные представления скрытых токенов;
+- узкий трансформер-**предиктор** получает латенты контекста и позиционные mask-токены и
+  предсказывает латенты цели (smooth-L1 по нормированным целям). В пространстве токенов ничего не
+  восстанавливается.
 
-What gets hidden (`--mask-strategy`):
+Что скрывается (`--mask-strategy`):
 
-| strategy | hidden tokens |
+| стратегия | скрытые токены |
 |---|---|
-| `random` | random contiguous blocks covering ~30% of the text |
-| `opinion` | the annotated **opinion span** of that aspect (available in `*_train_alltasks` files), falling back to `random` when there is none. The model has to predict *the latent of the sentiment expression* from the aspect and the rest of the sentence. |
+| `random` | случайные непрерывные блоки, ~30% текста |
+| `opinion` | размеченный **фрагмент-мнение** про этот аспект (есть в файлах `*_train_alltasks`); если его нет — как `random`. Модель должна предсказать *латент выражения оценки* по аспекту и остальному предложению. |
 
-How it is used:
+Как используется:
 
-| regime | flags | loss |
+| режим | флаги | функция потерь |
 |---|---|---|
-| baseline | *(default)* | `L_reg` |
-| JEPA auxiliary | `--jepa-weight 1.0` | `L_reg + λ·L_jepa`, jointly |
-| JEPA pretraining | `--pretrain-epochs N` | `N` epochs of `L_jepa` (no labels), then fine-tuning |
+| baseline | *(по умолчанию)* | `L_reg` |
+| JEPA как доп. лосс | `--jepa-weight 1.0` | `L_reg + λ·L_jepa`, совместно |
+| JEPA-предобучение | `--pretrain-epochs N` | `N` эпох `L_jepa` (без меток), затем дообучение |
 
-`--pretrain-on-eval-text` additionally feeds dev/test *texts* (never labels) to the pretraining stage.
+`--pretrain-on-eval-text` добавляет в предобучение *тексты* dev/test (метки — никогда).
 
-## Setup
+## Установка
 
 ```bash
-uv venv && uv pip install -e ".[dev]"   # or: pip install -e ".[dev]"
-./scripts/get_data.sh                   # clones the official repo into data/DimABSA2026
+uv venv && uv pip install -e ".[dev]"   # или: pip install -e ".[dev]"
+./scripts/get_data.sh                   # клонирует официальный репозиторий в data/DimABSA2026
 pytest -q
 ```
 
-## Running
+## Запуск
 
 ```bash
 # baseline
 python -m dimabsa_jepa.train --langs eng --model xlm-roberta-base --epochs 5
 
-# JEPA auxiliary loss with opinion-span masking
+# JEPA как дополнительный лосс, маскируется фрагмент-мнение
 python -m dimabsa_jepa.train --langs eng --model xlm-roberta-base --epochs 5 \
     --jepa-weight 1.0 --mask-strategy opinion
 
-# baseline vs JEPA variants over seeds, with a summary table
-python scripts/sweep.py --name eng-xlmr --seeds 0 1 2 \
-    --variants baseline jepa-aux-random jepa-aux-opinion jepa-pretrain \
-    -- --langs eng --model xlm-roberta-base --epochs 5
+# baseline и JEPA-варианты на нескольких сидах, со сводной таблицей
+python scripts/sweep.py --name xlmr-all --seeds 0 1 2 --gpus 2 \
+    --variants baseline jepa-aux-random jepa-aux-opinion \
+    -- --model xlm-roberta-base --epochs 5 --amp
 ```
 
-Omit `--langs` / `--domains` to train one multilingual model on everything. Each run selects the epoch
-with the best dev RMSE, evaluates it on the gold test sets and writes
-`runs/<name>/result.json` (per-file and pooled metrics) plus submission-format predictions in
-`runs/<name>/pred/`. CUDA is used automatically when present (`--amp` for mixed precision).
+Без `--langs` / `--domains` обучается одна многоязычная модель на всех данных. Каждый прогон выбирает
+эпоху с лучшим RMSE на dev, оценивает её на тесте с gold-метками и пишет `runs/<имя>/result.json`
+(метрики по каждому файлу и суммарные) и предсказания в формате сабмита в `runs/<имя>/pred/`.
+CUDA используется автоматически (`--amp` — смешанная точность).
 
-RMSE is reported unnormalised, on the 1–9 scale (the official script divides by √128 when run with
-normalisation); `tests/test_core.py` checks agreement with the official script.
+RMSE приводится ненормированным, по шкале 1–9 (официальный скрипт при нормировке делит на √128);
+`tests/test_core.py` проверяет совпадение с официальным скриптом.
 
-## Results
+### Запуск на Kaggle GPU
 
-Only a truncated CPU pilot so far: English (restaurant + laptop), `distilroberta-base`, 2,000 training
-instances, 3 epochs, **one seed** — stopped early, so this shows the pipeline works and nothing more.
-The difference between the two rows is well inside seed noise.
+```bash
+python scripts/kaggle_build.py --user <логин kaggle> --name xlmr-all-s0 -- \
+    --name xlmr-all --seeds 0 --gpus 2 -- --model xlm-roberta-base --epochs 5 --amp
+kaggle kernels push -p kaggle/xlmr-all-s0 --accelerator NvidiaTeslaT4
+kaggle kernels logs <логин>/dimabsa-jepa-xlmr-all-s0 --follow     # живой лог
+kaggle kernels output <логин>/dimabsa-jepa-xlmr-all-s0 -p out/    # результаты после завершения
+```
 
-| variant | seeds | dev RMSE | test RMSE | test PCC-V | test PCC-A |
+Исходники встраиваются в скрипт, данные клонируются уже на Kaggle (нужен включённый интернет).
+
+## Результаты
+
+Постановка: `xlm-roberta-base`, **одна модель на все шесть языков Track A** (31 875 обучающих примеров),
+5 эпох, batch 32, lr 3e-5, 3 сида, Kaggle 2×T4. Тест — 16 186 примеров с gold-метками.
+Файлы `result.json` всех прогонов лежат в `results/xlmr-all/`.
+
+### Суммарно по всем языкам
+
+| вариант | сиды | dev RMSE | test RMSE | test PCC-V | test PCC-A |
 |---|---|---|---|---|---|
-| baseline | 1 | 1.1918 | 1.5241 | 0.7850 | 0.5228 |
-| jepa-aux-random | 1 | 1.1832 | 1.5318 | 0.7803 | 0.5208 |
+| baseline | 3 | 0.8637 ± 0.0014 | 1.2358 ± 0.0039 | 0.8212 ± 0.0039 | 0.6392 ± 0.0018 |
+| jepa-aux-random | 3 | 0.8616 ± 0.0073 | 1.2372 ± 0.0016 | 0.8220 ± 0.0029 | 0.6424 ± 0.0048 |
+| jepa-aux-opinion | 3 | 0.8638 ± 0.0080 | 1.2408 ± 0.0064 | 0.8227 ± 0.0046 | 0.6409 ± 0.0028 |
+| jepa-pretrain (2 эпохи) | 1 | 0.8769 | 1.2442 | 0.8234 | 0.6374 |
 
-Reference points on the English test sets (RMSE, 1–9 scale): predicting the train mean gives 2.20;
-the task's unofficial Subtask 1 ranking has best / median of 1.24 / 1.42 (laptop) and 1.10 / 1.33
-(restaurant).
+**В сумме JEPA ничего не даёт**: все варианты в пределах разброса между сидами. При этом обучение
+с JEPA-лоссом почти вдвое дольше (435 с на эпоху против 237 с).
 
-## Layout
+### По наборам (test RMSE, среднее ± std по 3 сидам)
+
+«Побед» — в скольких сидах из трёх вариант лучше baseline с тем же сидом. Рейтинг — неофициальный
+рейтинг подзадачи 1 из README задачи; место считается по среднему RMSE.
+
+| набор | baseline | jepa-aux-random | побед | jepa-aux-opinion | побед | лучший в рейтинге | место baseline | место opinion |
+|---|---|---|---|---|---|---|---|---|
+| eng-laptop | 1.427 ± 0.006 | 1.424 ± 0.011 | 2/3 | 1.412 ± 0.010 | 2/3 | 1.241 | 22 / 36 | 19 / 36 |
+| eng-restaurant | 1.384 ± 0.004 | 1.363 ± 0.015 | 3/3 | 1.364 ± 0.012 | 2/3 | 1.103 | 26 / 40 | 24 / 40 |
+| jpn-finance | 0.947 ± 0.005 | 0.948 ± 0.022 | 1/3 | 0.913 ± 0.011 | 3/3 | 0.658 | 12 / 23 | 9 / 23 |
+| jpn-hotel | 0.723 ± 0.008 | 0.717 ± 0.008 | 1/3 | 0.714 ± 0.007 | 2/3 | 0.556 | 12 / 22 | 12 / 22 |
+| rus-restaurant | 1.504 ± 0.010 | 1.534 ± 0.011 | 0/3 | 1.530 ± 0.015 | 0/3 | 1.219 | 11 / 24 | 11 / 24 |
+| tat-restaurant | 1.965 ± 0.026 | 1.959 ± 0.018 | 2/3 | 2.000 ± 0.026 | 1/3 | 1.529 | 11 / 22 | 11 / 22 |
+| ukr-restaurant | 1.525 ± 0.021 | 1.547 ± 0.005 | 1/3 | 1.559 ± 0.020 | 0/3 | 1.189 | 10 / 20 | 11 / 20 |
+| zho-finance | 0.512 ± 0.014 | 0.499 ± 0.013 | 3/3 | 0.495 ± 0.006 | 3/3 | 0.484 | 8 / 21 | 6 / 21 |
+| zho-laptop | 0.713 ± 0.008 | 0.716 ± 0.010 | 1/3 | 0.722 ± 0.009 | 1/3 | 0.610 | 11 / 24 | 12 / 24 |
+| zho-restaurant | 0.994 ± 0.020 | 0.984 ± 0.006 | 2/3 | 0.975 ± 0.003 | 2/3 | 0.926 | 18 / 25 | 10 / 25 |
+
+Что видно:
+
+- **Устойчивый небольшой выигрыш** JEPA с маской на мнение: японские и китайские финансы (3 сида из 3),
+  английский (2 из 3, −0.015…−0.02).
+- **Устойчивый проигрыш** на русском (0 из 3, +0.03) и украинском. Вместе они и обнуляют суммарный эффект.
+- Одиночная `base`-модель без ансамбля стоит в середине рейтинга; JEPA сдвигает её на несколько мест
+  на части наборов, но не меняет класс результата.
+
+### Усреднение предсказаний
+
+| ансамбль | test RMSE (все наборы) |
+|---|---|
+| одна модель (baseline, среднее по сидам) | 1.236 |
+| 3 сида baseline | 1.199 |
+| 3 сида jepa-aux-opinion | 1.206 |
+| 9 моделей (3 варианта × 3 сида) | 1.192 |
+
+Простое усреднение трёх сидов даёт −0.037 — в разы больше любого эффекта JEPA.
+
+### Наблюдения по ошибкам
+
+- Ошибки baseline и JEPA-моделей почти совпадают: корреляция 0.89 по valence и 0.95 по arousal
+  (сид 0); JEPA точнее baseline примерно на половине примеров.
+- Все модели хуже всего на резко негативных (V < 3.5) и нейтральных аспектах.
+- **Русский, украинский, татарский:** в обучающих данных средний arousal 6.87, в тесте — 6.31.
+  Модели завышают arousal на тесте в среднем на ~0.5 (JEPA чуть сильнее, чем baseline). Это сдвиг
+  разметки между train и test, а не свойство модели; dev (81 пример) этот сдвиг тоже показывает.
+
+## Структура
 
 ```
-src/dimabsa_jepa/data.py     loading all task formats, block/opinion masking, submission writer
-src/dimabsa_jepa/model.py    encoder + VA head + EMA target + JEPA predictor
-src/dimabsa_jepa/train.py    training / evaluation entry point
-scripts/sweep.py             variants × seeds runner and summary table
-scripts/get_data.sh          fetch official data and evaluation script
+src/dimabsa_jepa/data.py     загрузка всех форматов задачи, маскирование, запись сабмита
+src/dimabsa_jepa/model.py    энкодер + голова VA + EMA target + предиктор JEPA
+src/dimabsa_jepa/train.py    обучение и оценка
+scripts/sweep.py             варианты × сиды, сводная таблица
+scripts/kaggle_build.py      сборка скрипта для Kaggle GPU
+scripts/get_data.sh          загрузка официальных данных и скрипта оценки
+results/                     result.json завершённых прогонов
 ```
 
-## Not done yet
+## Не сделано
 
-- Subtasks 2 and 3 (triplet / quadruplet extraction) — only Subtask 1 is implemented.
-- Full-scale runs with a base/large multilingual encoder on all languages (needs a GPU).
+- Подзадачи 2 и 3 (извлечение троек и четвёрок) — реализована только подзадача 1.
+- Подбор гиперпараметров JEPA (вес лосса, доля маски, размер предиктора) — использованы значения
+  по умолчанию.
+- JEPA-предобучение проверено на одном сиде и с двумя эпохами.
+- Track B (DimStance) не запускался.
